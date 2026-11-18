@@ -1,0 +1,395 @@
+diff --git a/src/core/nginx.c b/src/core/nginx.c
+index 1659494..1db70f9 100644
+--- a/src/core/nginx.c
++++ b/src/core/nginx.c
+@@ -1116,6 +1116,7 @@ ngx_core_module_create_conf(ngx_cycle_t *cycle)
+ 
+     ccf->daemon = NGX_CONF_UNSET;
+     ccf->master = NGX_CONF_UNSET;
++    ccf->privileged_agent = NGX_CONF_UNSET;
+     ccf->timer_resolution = NGX_CONF_UNSET_MSEC;
+     ccf->shutdown_timeout = NGX_CONF_UNSET_MSEC;
+ 
+@@ -1145,6 +1146,7 @@ ngx_core_module_init_conf(ngx_cycle_t *cycle, void *conf)
+ 
+     ngx_conf_init_value(ccf->daemon, 1);
+     ngx_conf_init_value(ccf->master, 1);
++    ngx_conf_init_value(ccf->privileged_agent, 0);
+     ngx_conf_init_msec_value(ccf->timer_resolution, 0);
+     ngx_conf_init_msec_value(ccf->shutdown_timeout, 0);
+ 
+diff --git a/src/core/nginx.c.orig b/src/core/nginx.c.orig
+index 0deb27b..1659494 100644
+--- a/src/core/nginx.c.orig
++++ b/src/core/nginx.c.orig
+@@ -188,6 +188,7 @@ static u_char      *ngx_error_log;
+ static u_char      *ngx_conf_file;
+ static u_char      *ngx_conf_params;
+ static char        *ngx_signal;
++ngx_pool_t         *saved_init_cycle_pool = NULL;
+ 
+ 
+ static char **ngx_os_environ;
+@@ -256,6 +257,8 @@ main(int argc, char *const *argv)
+         return 1;
+     }
+ 
++    saved_init_cycle_pool = init_cycle.pool;
++
+     if (ngx_save_argv(&init_cycle, argc, argv) != NGX_OK) {
+         return 1;
+     }
+diff --git a/src/core/ngx_cycle.h b/src/core/ngx_cycle.h
+index 0c47f25..6a9583e 100644
+--- a/src/core/ngx_cycle.h
++++ b/src/core/ngx_cycle.h
+@@ -22,6 +22,9 @@
+ #define NGX_DEBUG_POINTS_ABORT  2
+ 
+ 
++#define HAVE_PRIVILEGED_PROCESS_PATCH   1
++
++
+ typedef struct ngx_shm_zone_s  ngx_shm_zone_t;
+ 
+ typedef ngx_int_t (*ngx_shm_zone_init_pt) (ngx_shm_zone_t *zone, void *data);
+@@ -89,6 +92,7 @@ struct ngx_cycle_s {
+ typedef struct {
+     ngx_flag_t                daemon;
+     ngx_flag_t                master;
++    ngx_flag_t                privileged_agent;
+ 
+     ngx_msec_t                timer_resolution;
+     ngx_msec_t                shutdown_timeout;
+diff --git a/src/core/ngx_cycle.h.orig b/src/core/ngx_cycle.h.orig
+new file mode 100644
+index 0000000..0c47f25
+--- /dev/null
++++ b/src/core/ngx_cycle.h.orig
+@@ -0,0 +1,149 @@
++
++/*
++ * Copyright (C) Igor Sysoev
++ * Copyright (C) Nginx, Inc.
++ */
++
++
++#ifndef _NGX_CYCLE_H_INCLUDED_
++#define _NGX_CYCLE_H_INCLUDED_
++
++
++#include <ngx_config.h>
++#include <ngx_core.h>
++
++
++#ifndef NGX_CYCLE_POOL_SIZE
++#define NGX_CYCLE_POOL_SIZE     NGX_DEFAULT_POOL_SIZE
++#endif
++
++
++#define NGX_DEBUG_POINTS_STOP   1
++#define NGX_DEBUG_POINTS_ABORT  2
++
++
++typedef struct ngx_shm_zone_s  ngx_shm_zone_t;
++
++typedef ngx_int_t (*ngx_shm_zone_init_pt) (ngx_shm_zone_t *zone, void *data);
++
++struct ngx_shm_zone_s {
++    void                     *data;
++    ngx_shm_t                 shm;
++    ngx_shm_zone_init_pt      init;
++    void                     *tag;
++    void                     *sync;
++    ngx_uint_t                noreuse;  /* unsigned  noreuse:1; */
++};
++
++
++struct ngx_cycle_s {
++    void                  ****conf_ctx;
++    ngx_pool_t               *pool;
++
++    ngx_log_t                *log;
++    ngx_log_t                 new_log;
++
++    ngx_uint_t                log_use_stderr;  /* unsigned  log_use_stderr:1; */
++
++    ngx_connection_t        **files;
++    ngx_connection_t         *free_connections;
++    ngx_uint_t                free_connection_n;
++
++    ngx_module_t            **modules;
++    ngx_uint_t                modules_n;
++    ngx_uint_t                modules_used;    /* unsigned  modules_used:1; */
++
++    ngx_queue_t               reusable_connections_queue;
++    ngx_uint_t                reusable_connections_n;
++    time_t                    connections_reuse_time;
++
++    ngx_array_t               listening;
++    ngx_array_t               paths;
++
++    ngx_array_t               config_dump;
++    ngx_rbtree_t              config_dump_rbtree;
++    ngx_rbtree_node_t         config_dump_sentinel;
++
++    ngx_list_t                open_files;
++    ngx_list_t                shared_memory;
++
++    ngx_uint_t                connection_n;
++    ngx_uint_t                files_n;
++
++    ngx_connection_t         *connections;
++    ngx_event_t              *read_events;
++    ngx_event_t              *write_events;
++
++    ngx_cycle_t              *old_cycle;
++
++    ngx_str_t                 conf_file;
++    ngx_str_t                 conf_param;
++    ngx_str_t                 conf_prefix;
++    ngx_str_t                 prefix;
++    ngx_str_t                 error_log;
++    ngx_str_t                 lock_file;
++    ngx_str_t                 hostname;
++};
++
++
++typedef struct {
++    ngx_flag_t                daemon;
++    ngx_flag_t                master;
++
++    ngx_msec_t                timer_resolution;
++    ngx_msec_t                shutdown_timeout;
++
++    ngx_int_t                 worker_processes;
++    ngx_int_t                 debug_points;
++
++    ngx_int_t                 rlimit_nofile;
++    off_t                     rlimit_core;
++
++    int                       priority;
++
++    ngx_uint_t                cpu_affinity_auto;
++    ngx_uint_t                cpu_affinity_n;
++    ngx_cpuset_t             *cpu_affinity;
++
++    char                     *username;
++    ngx_uid_t                 user;
++    ngx_gid_t                 group;
++
++    ngx_str_t                 working_directory;
++    ngx_str_t                 lock_file;
++
++    ngx_str_t                 pid;
++    ngx_str_t                 oldpid;
++
++    ngx_array_t               env;
++    char                    **environment;
++
++    ngx_uint_t                transparent;  /* unsigned  transparent:1; */
++} ngx_core_conf_t;
++
++
++#define ngx_is_init_cycle(cycle)  (cycle->conf_ctx == NULL)
++
++
++ngx_cycle_t *ngx_init_cycle(ngx_cycle_t *old_cycle);
++ngx_int_t ngx_create_pidfile(ngx_str_t *name, ngx_log_t *log);
++void ngx_delete_pidfile(ngx_cycle_t *cycle);
++ngx_int_t ngx_signal_process(ngx_cycle_t *cycle, char *sig);
++void ngx_reopen_files(ngx_cycle_t *cycle, ngx_uid_t user);
++char **ngx_set_environment(ngx_cycle_t *cycle, ngx_uint_t *last);
++ngx_pid_t ngx_exec_new_binary(ngx_cycle_t *cycle, char *const *argv);
++ngx_cpuset_t *ngx_get_cpu_affinity(ngx_uint_t n);
++ngx_shm_zone_t *ngx_shared_memory_add(ngx_conf_t *cf, ngx_str_t *name,
++    size_t size, void *tag);
++void ngx_set_shutdown_timer(ngx_cycle_t *cycle);
++
++
++extern volatile ngx_cycle_t  *ngx_cycle;
++extern ngx_array_t            ngx_old_cycles;
++extern ngx_module_t           ngx_core_module;
++extern ngx_uint_t             ngx_test_config;
++extern ngx_uint_t             ngx_dump_config;
++extern ngx_uint_t             ngx_quiet_mode;
++
++
++#endif /* _NGX_CYCLE_H_INCLUDED_ */
+diff --git a/src/os/unix/ngx_process_cycle.c b/src/os/unix/ngx_process_cycle.c
+index 4d6e7d3..e89e71a 100644
+--- a/src/os/unix/ngx_process_cycle.c
++++ b/src/os/unix/ngx_process_cycle.c
+@@ -15,6 +15,8 @@ static void ngx_start_worker_processes(ngx_cycle_t *cycle, ngx_int_t n,
+     ngx_int_t type);
+ static void ngx_start_cache_manager_processes(ngx_cycle_t *cycle,
+     ngx_uint_t respawn);
++static void ngx_start_privileged_agent_processes(ngx_cycle_t *cycle,
++    ngx_uint_t respawn);
+ static void ngx_pass_open_channel(ngx_cycle_t *cycle);
+ static void ngx_signal_worker_processes(ngx_cycle_t *cycle, int signo);
+ static ngx_uint_t ngx_reap_children(ngx_cycle_t *cycle);
+@@ -24,6 +26,7 @@ static void ngx_worker_process_init(ngx_cycle_t *cycle, ngx_int_t worker);
+ static void ngx_worker_process_exit(ngx_cycle_t *cycle);
+ static void ngx_channel_handler(ngx_event_t *ev);
+ static void ngx_cache_manager_process_cycle(ngx_cycle_t *cycle, void *data);
++static void ngx_privileged_agent_process_cycle(ngx_cycle_t *cycle, void *data);
+ static void ngx_cache_manager_process_handler(ngx_event_t *ev);
+ static void ngx_cache_loader_process_handler(ngx_event_t *ev);
+ 
+@@ -52,6 +55,8 @@ sig_atomic_t  ngx_noaccept;
+ ngx_uint_t    ngx_noaccepting;
+ ngx_uint_t    ngx_restart;
+ 
++ngx_uint_t    ngx_is_privileged_agent;
++
+ 
+ static u_char  master_process[] = "master process";
+ 
+@@ -130,6 +135,7 @@ ngx_master_process_cycle(ngx_cycle_t *cycle)
+     ngx_start_worker_processes(cycle, ccf->worker_processes,
+                                NGX_PROCESS_RESPAWN);
+     ngx_start_cache_manager_processes(cycle, 0);
++    ngx_start_privileged_agent_processes(cycle, 0);
+ 
+     ngx_new_binary = 0;
+     delay = 0;
+@@ -215,6 +221,7 @@ ngx_master_process_cycle(ngx_cycle_t *cycle)
+                 ngx_start_worker_processes(cycle, ccf->worker_processes,
+                                            NGX_PROCESS_RESPAWN);
+                 ngx_start_cache_manager_processes(cycle, 0);
++                ngx_start_privileged_agent_processes(cycle, 0);
+                 ngx_noaccepting = 0;
+ 
+                 continue;
+@@ -234,6 +241,7 @@ ngx_master_process_cycle(ngx_cycle_t *cycle)
+             ngx_start_worker_processes(cycle, ccf->worker_processes,
+                                        NGX_PROCESS_JUST_RESPAWN);
+             ngx_start_cache_manager_processes(cycle, 1);
++            ngx_start_privileged_agent_processes(cycle, 1);
+ 
+             /* allow new processes to start */
+             ngx_msleep(100);
+@@ -248,6 +256,7 @@ ngx_master_process_cycle(ngx_cycle_t *cycle)
+             ngx_start_worker_processes(cycle, ccf->worker_processes,
+                                        NGX_PROCESS_RESPAWN);
+             ngx_start_cache_manager_processes(cycle, 0);
++            ngx_start_privileged_agent_processes(cycle, 0);
+             live = 1;
+         }
+ 
+@@ -392,6 +401,26 @@ ngx_start_cache_manager_processes(ngx_cycle_t *cycle, ngx_uint_t respawn)
+ }
+ 
+ 
++static void
++ngx_start_privileged_agent_processes(ngx_cycle_t *cycle, ngx_uint_t respawn)
++{
++    ngx_core_conf_t       *ccf;
++
++    ccf = (ngx_core_conf_t *) ngx_get_conf(cycle->conf_ctx,
++                                           ngx_core_module);
++
++    if (!ccf->privileged_agent) {
++        return;
++    }
++
++    ngx_spawn_process(cycle, ngx_privileged_agent_process_cycle,
++                      "privileged agent process", "privileged agent process",
++                      respawn ? NGX_PROCESS_JUST_RESPAWN : NGX_PROCESS_RESPAWN);
++
++    ngx_pass_open_channel(cycle);
++}
++
++
+ static void
+ ngx_pass_open_channel(ngx_cycle_t *cycle)
+ {
+@@ -801,7 +830,10 @@ ngx_worker_process_init(ngx_cycle_t *cycle, ngx_int_t worker)
+         }
+     }
+ 
+-    if (geteuid() == 0) {
++    /*
++     * privileged agent process has the same permission as master process
++     */
++    if (!ngx_is_privileged_agent && geteuid() == 0) {
+         if (setgid(ccf->group) == -1) {
+             ngx_log_error(NGX_LOG_EMERG, cycle->log, ngx_errno,
+                           "setgid(%d) failed", ccf->group);
+@@ -1147,6 +1179,47 @@ ngx_cache_manager_process_cycle(ngx_cycle_t *cycle, void *data)
+ }
+ 
+ 
++static void
++ngx_privileged_agent_process_cycle(ngx_cycle_t *cycle, void *data)
++{
++    char   *name = data;
++
++    /*
++     * Set correct process type since closing listening Unix domain socket
++     * in a master process also removes the Unix domain socket file.
++     */
++    ngx_process = NGX_PROCESS_HELPER;
++    ngx_is_privileged_agent = 1;
++
++    ngx_close_listening_sockets(cycle);
++
++    /* Set a moderate number of connections for a helper process. */
++    cycle->connection_n = 512;
++
++    ngx_worker_process_init(cycle, -1);
++
++    ngx_use_accept_mutex = 0;
++
++    ngx_setproctitle(name);
++
++    for ( ;; ) {
++
++        if (ngx_terminate || ngx_quit) {
++            ngx_log_error(NGX_LOG_NOTICE, cycle->log, 0, "exiting");
++            ngx_worker_process_exit(cycle);
++        }
++
++        if (ngx_reopen) {
++            ngx_reopen = 0;
++            ngx_log_error(NGX_LOG_NOTICE, cycle->log, 0, "reopening logs");
++            ngx_reopen_files(cycle, -1);
++        }
++
++        ngx_process_events_and_timers(cycle);
++    }
++}
++
++
+ static void
+ ngx_cache_manager_process_handler(ngx_event_t *ev)
+ {
+diff --git a/src/os/unix/ngx_process_cycle.c.orig b/src/os/unix/ngx_process_cycle.c.orig
+index 5bc5ce9..b3cb12e 100644
+--- a/src/os/unix/ngx_process_cycle.c.orig
++++ b/src/os/unix/ngx_process_cycle.c.orig
+@@ -689,6 +689,11 @@ ngx_master_process_exit(ngx_cycle_t *cycle)
+     ngx_exit_cycle.files_n = ngx_cycle->files_n;
+     ngx_cycle = &ngx_exit_cycle;
+ 
++    if (saved_init_cycle_pool != NULL && saved_init_cycle_pool != cycle->pool) {
++        ngx_destroy_pool(saved_init_cycle_pool);
++        saved_init_cycle_pool = NULL;
++    }
++
+     ngx_destroy_pool(cycle->pool);
+ 
+     exit(0);
+diff --git a/src/os/unix/ngx_process_cycle.h b/src/os/unix/ngx_process_cycle.h
+index 69495d5..5149396 100644
+--- a/src/os/unix/ngx_process_cycle.h
++++ b/src/os/unix/ngx_process_cycle.h
+@@ -45,6 +45,7 @@ extern ngx_pid_t       ngx_new_binary;
+ extern ngx_uint_t      ngx_inherited;
+ extern ngx_uint_t      ngx_daemonized;
+ extern ngx_uint_t      ngx_exiting;
++extern ngx_uint_t      ngx_is_privileged_agent;
+ 
+ extern sig_atomic_t    ngx_reap;
+ extern sig_atomic_t    ngx_sigio;

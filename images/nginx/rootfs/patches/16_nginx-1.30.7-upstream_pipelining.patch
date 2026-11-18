@@ -1,0 +1,29 @@
+diff --git a/src/http/ngx_http_upstream.c b/src/http/ngx_http_upstream.c
+index 5d0284b..59e4f4b 100644
+--- a/src/http/ngx_http_upstream.c
++++ b/src/http/ngx_http_upstream.c
+@@ -2409,7 +2409,7 @@ ngx_http_upstream_send_request_handler(ngx_http_request_t *r,
+ 
+ #endif
+ 
+-    if (u->header_sent && !u->conf->preserve_output) {
++    if (u->request_body_sent && !u->conf->preserve_output) {
+         u->write_event_handler = ngx_http_upstream_dummy_handler;
+ 
+         (void) ngx_handle_write_event(c->write, 0);
+diff --git a/src/http/ngx_http_upstream.c.orig b/src/http/ngx_http_upstream.c.orig
+index d29e503..4b065bd 100644
+--- a/src/http/ngx_http_upstream.c.orig
++++ b/src/http/ngx_http_upstream.c.orig
+@@ -1563,6 +1563,11 @@ ngx_http_upstream_connect(ngx_http_request_t *r, ngx_http_upstream_t *u)
+         return;
+     }
+ 
++    if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
++        ngx_http_upstream_finalize_request(r, u, rc);
++        return;
++    }
++
+     u->state->peer = u->peer.name;
+ 
+     if (rc == NGX_BUSY) {
