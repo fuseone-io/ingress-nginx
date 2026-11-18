@@ -4,6 +4,19 @@ Fork of [kubernetes/ingress-nginx](https://github.com/kubernetes/ingress-nginx)
 kept alive after the upstream project was archived, to carry a **newer, patched
 NGINX** on top of a known controller release during migration off this controller.
 
+## Support policy
+
+This fork is maintained for **one single purpose**: to keep **this one release
+alive** — controller **v1.15.1** rebuilt on a patched **NGINX 1.30.7** — with
+security patches, as a bridge while we migrate away from this controller.
+
+- Only the `v1.15.1-nginx-1.30.7` branch and the `v1.15.1-fuseone.1` images are maintained.
+- **Previous controller/NGINX versions are NOT supported.** We do not backport to,
+  rebuild, or accept issues for any other version.
+- No upstream-style guarantees. Provided **as-is, no warranty**. If you choose to
+  use it, pin to our image digests and track this branch for patch bumps.
+- This is a stopgap, not a destination — it exists only until the migration completes.
+
 ## Branch `v1.15.1-nginx-1.30.7`
 
 Based on tag `controller-v1.15.1` with a minimal, generic delta:
