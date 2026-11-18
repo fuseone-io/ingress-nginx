@@ -2,7 +2,7 @@ name: fuseone-build
 
 on:
   push:
-    branches: [ "v1.15.1-nginx-1.30.7" ]
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
